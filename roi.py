@@ -4,11 +4,10 @@ import nibabel as nib
 import nipype.interfaces.fsl as fsl
 from nilearn.datasets import load_mni152_brain_mask
 
-def make_sphere(x,y,z,output_dir):
+def make_sphere(x, y, z, roi_prefix, output_dir):
 
     mask = load_mni152_brain_mask()
     mask_img = mask.get_data()
-    roi_prefix = '{x}_{y}_{z}'.format(x=x, y=y, z=z)
 
     tmp_mask_img = mask_img * 0
     tmp_mask_img[x,y,z] = 1
