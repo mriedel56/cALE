@@ -3,10 +3,12 @@ from __future__ import division
 from nipype.interfaces import fsl as fsl          # fsl
 from nipype.interfaces import utility as util     # utility
 from nipype.pipeline import engine as pe          # pypeline engine
+import nipype.interfaces.io as nio
 import os
 import os.path as op
 import shutil
 from glob import glob
+import numpy as np
 
 
 def getthreshop(thresh):
@@ -104,7 +106,6 @@ def rs_preprocess(name='featpreproc', highpass=True, realign=True, whichvol='mid
 
 
     from nipype.workflows.fmri.fsl.preprocess import create_susan_smooth
-    import nipype.interfaces.io as nio
     from nipype import LooseVersion
 
     version = 0
@@ -429,48 +430,75 @@ def rs_preprocess(name='featpreproc', highpass=True, realign=True, whichvol='mid
     return featpreproc
 
 
-def rs_firstlevel():
+def rs_firstlevel(name="rsworkflow", outputdir=None):
+
     import nipype.algorithms.modelgen as model  # model generation
     from niflow.nipype1.workflows.fmri.fsl import (create_modelfit_workflow,
                                        create_fixed_effects_flow)
-                                       
+
+
     level1_workflow = pe.Workflow(name='level1flow')
 
     modelfit = create_modelfit_workflow()
+    modelfit.get_node('modelestimate').inputs.smooth_autocorr = False
+    modelfit.get_node('modelestimate').inputs.autocorr_noestimate = True
+    modelspec = pe.Node(model.SpecifyModel(), name="modelspec")
 
-    fixed_fx = create_fixed_effects_flow()
+    inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
+                                                                 'subjectinfo']),
+                        name='inputspec')
 
-    cont1 = ['corr', 'T', ['roi'], [1]]
+    """
+    This node will write out image files in output directory
+    """
+    datasink = pe.Node(nio.DataSink(), name='sinker')
+    datasink.inputs.base_directory = outputdir
+
+    level1_workflow.connect(
+        [(inputnode, modelspec, [('func', 'functional_runs')]),
+         (inputnode, modelspec, [('subjectinfo', 'subject_info')]),
+         (modelspec, modelfit, [('session_info', 'inputspec.session_info')]),
+         (inputnode, modelfit, [('func', 'inputspec.functional_data')])])
+
+
+    cont1 = ['corr', 'T', ['roi', 'gsr'], [1,0]]
     contrasts = [cont1]
 
     modelspec.inputs.input_units = 'secs'
-    modelspec.inputs.time_repetition = TR
-    modelspec.inputs.high_pass_filter_cutoff = hpcutoff
+    modelspec.inputs.time_repetition = 0.72
+    modelspec.inputs.high_pass_filter_cutoff = 0
 
-    modelfit.inputs.inputspec.interscan_interval = TR
-    modelfit.inputs.inputspec.bases = {'dgamma': {'derivs': False}}
+    modelfit.inputs.inputspec.interscan_interval = 0.72
+    modelfit.inputs.inputspec.bases = {'none': {'none': None}}
     modelfit.inputs.inputspec.contrasts = contrasts
-    modelfit.inputs.inputspec.model_serial_correlations = True
+    modelfit.inputs.inputspec.model_serial_correlations = False
     modelfit.inputs.inputspec.film_threshold = 1000
+
+    return level1_workflow
+
 #def rs_secondlevel():
 
 #def rs_grouplevel():
 
+
 def rs_workflow(rs_data_dir, roi_prefix, tmp_roi_fn, work_dir):
+
+    from nipype.interfaces.base import Bunch
 
     os.makedirs(op.join(work_dir, 'rsfc'))
 
     #get participants
     ppt_df = pandas.read_csv(rs_data_dir, 'participants.tsv', sep='/t')
     for ppt in ppt_df['participant_id']:
-        nii_files = os.listdir(rs_data_dir, ppt, 'func')
+        nii_files = os.listdir(op.join(rs_data_dir, ppt, 'func'))
         for nii_fn in nii_files:
 
             #check to see if smoothed data exists
             smooth_fn = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt, nii_fn.split('.')[0], '{0}_smooth.nii.gz'.format(nii_fn.split('.')[0]))
             if not op.isfile(smooth_fn):
                 nii_work_dir = op.join(work_dir, 'rsfc', nii_fn.split('.')[0])
-                smooth_flow = rs_preprocess(name='featpreproc', highpass=False, realign=False, whichvol='first', outputdir=nii_work_dir):
+                smooth_flow = rs_preprocess(name='featpreproc', highpass=False, realign=False, whichvol='first', outputdir=nii_work_dir)
+                smooth_flow.inputs.inputspec.func = op.join(rs_data_dir, ppt, 'func', nii_fn)
                 smooth_flow.inputs.inputspec.fwhm = 4
                 smooth_flow.base_dir = nii_work_dir
 
@@ -482,8 +510,30 @@ def rs_workflow(rs_data_dir, roi_prefix, tmp_roi_fn, work_dir):
 
             else:
                 #run analysis
-                print('running roi analysis')
-                rs_firstlevel()
+                roi_out_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, nii_fn.split('.')[0])
+
+                mask = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt, nii_fn.split('.')[0], '{0}_mask.nii.gz'.format(nii_fn.split('.')[0]))
+                meants = fsl.utils.ImageMeants()
+                meants.in_file = smooth_fn
+                meants.mask = tmp_roi_fn
+                meants.out_file = op.join(roi_out_dir, '{0}.{1}.txt'.format(op.basename(tmp_roi_fn).split('.')[0], nii_fn.split('.')[0]))
+                meants.run()
+
+                meants.mask = mask
+                meants.out_file = op.join(roi_out_dir, 'gsr.{0}.txt'.format(nii_fn.split('.')[0]))
+                meants.run()
+
+                roi_ts = np.atleast_2d(np.loadtxt(op.join(roi_out_dir, '{0}.{1}.txt'.format(op.basename(tmp_roi_fn).split('.')[0], nii_fn.split('.')[0]))))
+                gsr_ts = np.atleast_2d(np.loadtxt(op.join(roi_out_dir, 'gsr.{0}.txt'.format(nii_fn.split('.')[0]))))
+                subject_info = Bunch(conditions=['roi', 'gsr'], onsets=[list(range(1,len(roi_ts)+1,1)), list(range(1,len(gsr_ts)+1,1))], durations=[[0], [0]], amplitudes=[roi_ts.tolist(), gsr_ts.tolist()])
+                #subject_info = Bunch(conditions=['roi', 'gsr'], onsets=[roi_ts.tolist(), gsr_ts.tolist()], durations=[[0], [0]])
+
+                firstlevel = rs_firstlevel(name="firstlevel", outputdir=roi_out_dir)
+                firstlevel.inputs.inputspec.func = smooth_fn
+                firstlevel.inputs.inputspec.subjectinfo = subject_info
+
+                firstlevel.run()
+
 
         if len(nii_files)>1:
             rs_secondlevel()
