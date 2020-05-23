@@ -4,18 +4,14 @@ Perform complementary ALE network workflow.
 
 import os
 import numpy as np
-import pandas as pd
 import os.path as op
-import nibabel as nib
 import shutil
-from roi import make_sphere
 from peaks import get_peaks
-from macm import macm_workflow
-import nipype.pipeline.engine as pe
 from nimare.workflows.ale import ale_sleuth_workflow
+from connectivity import connectivity_workflow
 
 
-def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_dir=None, ns_data_dir=None, macm_data_dir=None, rsfc_data_dir=None, work_dir=None):
+def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_dir=None, ns_data_dir=None, macm_data_dir=None, rsfc_data_dir=None, con_data_dir=None, work_dir=None):
 
     if output_dir == None:
         output_dir = "."
@@ -25,6 +21,9 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
 
     if ns_data_dir == None:
         ns_data_dir = '.'
+
+    if con_data_dir == None:
+        con_data_dir = '.'
 
     if roi_data_dir == None:
         roi_data_dir = '.'
@@ -83,50 +82,25 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
     Identify cluster peaks.
     Generate spherical ROIs around cluster peaks.
     """
-    peaks_df = get_peaks(img_file, work_dir)
+    peaks_df = get_peaks(img_file, og_ale_dir)
 
     og_roi_dir = op.join(output_dir, 'original', 'rois')
     if op.isdir(og_roi_dir):
         shutil.rmtree(og_roi_dir)
     os.makedirs(og_roi_dir)
 
-    #Make spheres for each coordinate
+    #run connectivity workflow for each set of coordinates in the dataframe
     for i, row in peaks_df.iterrows():
-        roi_prefix = '{x}_{y}_{z}'.format(x=row['x-mm'], y=row['y-mm'], z=row['z-mm'])
+        connectivity_workflow(row, output_dir, roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir)
 
-        # See if file already exists in ROI directory
-        roi_fn = op.join(roi_data_dir, roi_prefix + '.nii.gz')
-        if not op.isfile(roi_fn):
-            make_sphere(row['x'], row['y'], row['z'], roi_prefix, roi_data_dir)
+    com_ale_dir = op.join(output_dir, 'complementary', 'ale')
+    if op.isdir(com_ale_dir):
+        shutil.rmtree(com_ale_dir)
+    os.makedirs(com_ale_dir)
 
-        shutil.copy(roi_fn, og_roi_dir)
-        """
-        Connectivity Profiles.
-        Generate MACMs using Neurosynth.
-        Generate Resting-State connectivity maps using HCP data
-        Generate Consensus connectivity profiles
-        """
-        #MACMs
-        og_macm_dir = op.join(output_dir, 'original', 'macm')
-        if op.isdir(og_macm_dir):
-            shutil.rmtree(og_macm_dir)
-        os.makedirs(og_macm_dir)
+    #sum consensus connectivity maps
+    image_sum(og_con_dir com_ale_dir)
 
-        # See if file already exists in MACM directory
-        macm_fn = op.join(macm_data_dir, roi_prefix + '_logp_level-cluster_corr-FWE_method-permutation.nii.gz')
-        if not op.isfile(macm_fn):
-            macm_workflow(ns_data_dir, macm_data_dir, roi_prefix, roi_fn)
-
-        shutil.copy(macm_fn, og_macm_dir)
-        exit()
-        #Resting-State
-        og_rsfc_dir = op.join(output_dir, 'original', 'rsfc')
-        if op.isdir(og_rsfc_dir):
-            shutil.rmtree(og_rsfc_dir)
-        os.makedirs(og_rsfc_dir)
-
-        rs_fn = op.join(rs_data_dir, 'derivatives', roi_prefix + '.gfeat', 'cope1.feat', 'thresh_zstat1.nii.gz')
-        if not op.isfile(rs_fn):
-            rs_workflow(rs_data_dir, roi_prefix, tmp_roi_fn, work_dir)
-
-        copyfile(rs_fn, og_rsfc_dir)
+    cale_fn = glob(op.join(com_ale_dir, 'cALE_thresh-*.nii.gz'))
+    #identify cluster peaks in cALE image
+    com_peaks_df = get_peaks(cale_fn, work_dir)

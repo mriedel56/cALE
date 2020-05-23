@@ -442,6 +442,7 @@ def rs_firstlevel(name="rsworkflow", outputdir=None):
     modelfit = create_modelfit_workflow()
     modelfit.get_node('modelestimate').inputs.smooth_autocorr = False
     modelfit.get_node('modelestimate').inputs.autocorr_noestimate = True
+    modelfit.get_node('modelestimate').inputs.mask_size = 0
     modelspec = pe.Node(model.SpecifyModel(), name="modelspec")
 
     inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
@@ -461,8 +462,8 @@ def rs_firstlevel(name="rsworkflow", outputdir=None):
          (inputnode, modelfit, [('func', 'inputspec.functional_data')])])
 
 
-    cont1 = ['corr', 'T', ['roi', 'gsr'], [1,0]]
-    contrasts = [cont1]
+    cont1 = ['corr', 'T', ['gsr', 'roi'], [0,1]]
+    contrasts = [cont1, cont2]
 
     modelspec.inputs.input_units = 'secs'
     modelspec.inputs.time_repetition = 0.72
@@ -525,7 +526,7 @@ def rs_workflow(rs_data_dir, roi_prefix, tmp_roi_fn, work_dir):
 
                 roi_ts = np.atleast_2d(np.loadtxt(op.join(roi_out_dir, '{0}.{1}.txt'.format(op.basename(tmp_roi_fn).split('.')[0], nii_fn.split('.')[0]))))
                 gsr_ts = np.atleast_2d(np.loadtxt(op.join(roi_out_dir, 'gsr.{0}.txt'.format(nii_fn.split('.')[0]))))
-                subject_info = Bunch(conditions=['roi', 'gsr'], onsets=[list(range(1,len(roi_ts)+1,1)), list(range(1,len(gsr_ts)+1,1))], durations=[[0], [0]], amplitudes=[roi_ts.tolist(), gsr_ts.tolist()])
+                subject_info = Bunch(conditions=['roi'], onsets=[list(range(1,len(roi_ts)+1,1))], durations=[[0]], amplitudes=[roi_ts.tolist()], regressor_names=['gsr'], regressors=[gsr_ts.tolist()])
                 #subject_info = Bunch(conditions=['roi', 'gsr'], onsets=[roi_ts.tolist(), gsr_ts.tolist()], durations=[[0], [0]])
 
                 firstlevel = rs_firstlevel(name="firstlevel", outputdir=roi_out_dir)
