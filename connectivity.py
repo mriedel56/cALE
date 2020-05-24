@@ -7,16 +7,8 @@ from rs import rs_workflow
 from consensus import con_workflow
 
 
-def connectivity_workflow(row, output_dir, roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir):
+def connectivity_workflow(roi_fn, output_dir, roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir):
 
-  roi_prefix = '{x}_{y}_{z}'.format(x=row['x'], y=row['y'], z=row['z'])
-
-  # See if file already exists in ROI directory
-  roi_fn = op.join(roi_data_dir, roi_prefix + '.nii.gz')
-  if not op.isfile(roi_fn):
-      make_sphere(row['x'], row['y'], row['z'], roi_data_dir)
-
-  shutil.copy(roi_fn, og_roi_dir)
   """
   Connectivity Profiles.
   Generate MACMs using Neurosynth.
@@ -24,13 +16,13 @@ def connectivity_workflow(row, output_dir, roi_data_dir, macm_data_dir, rs_data_
   Generate Consensus connectivity profiles
   """
   #MACMs
-  og_macm_dir = op.join(output_dir, 'original', 'macm')
+  og_macm_dir = op.join(output_dir, 'macm')
   if op.isdir(og_macm_dir):
       shutil.rmtree(og_macm_dir)
   os.makedirs(og_macm_dir)
 
   # See if file already exists in MACM directory
-  macm_fn = op.join(macm_data_dir, roi_prefix + '_logp_level-cluster_corr-FWE_method-permutation.nii.gz')
+  macm_fn = op.join(macm_data_dir, op.basename(roi_fn).split('.')[0] + '_logp_level-cluster_corr-FWE_method-permutation.nii.gz')
   if not op.isfile(macm_fn):
       macm_workflow(ns_data_dir, macm_data_dir, roi_prefix, roi_fn)
 
@@ -38,7 +30,7 @@ def connectivity_workflow(row, output_dir, roi_data_dir, macm_data_dir, rs_data_
   exit()
 
   #Resting-State
-  og_rsfc_dir = op.join(output_dir, 'original', 'rsfc')
+  og_rsfc_dir = op.join(output_dir, 'rsfc')
   if op.isdir(og_rsfc_dir):
       shutil.rmtree(og_rsfc_dir)
   os.makedirs(og_rsfc_dir)
@@ -50,7 +42,7 @@ def connectivity_workflow(row, output_dir, roi_data_dir, macm_data_dir, rs_data_
   shutil.copy(rs_fn, og_rsfc_dir)
 
   #Make binary consensus connectivity profiles
-  og_con_dir = op.join(output_dir, 'original', 'consensus')
+  og_con_dir = op.join(output_dir, 'consensus')
   if op.isdir(og_con_dir):
       shutil.rmtree(og_con_dir)
   os.makedirs(og_con_dir)

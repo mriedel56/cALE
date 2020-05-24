@@ -9,15 +9,19 @@ import shutil
 from peaks import get_peaks
 from nimare.workflows.ale import ale_sleuth_workflow
 from connectivity import connectivity_workflow
+from complementary import cale
 
 
 def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_dir=None, ns_data_dir=None, macm_data_dir=None, rsfc_data_dir=None, con_data_dir=None, work_dir=None):
 
-    if output_dir == None:
-        output_dir = "."
-
     if prefix == None:
         prefix = op.basename(input_file).split('.')[0] + "_"
+
+    if output_dir == None:
+        output_dir = op.join(op.abspath(input_file), 'prefix')
+    if op.isdir(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir)
 
     if ns_data_dir == None:
         ns_data_dir = '.'
@@ -58,8 +62,6 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
     img_ext = ['nii', 'nii.gz']
 
     og_ale_dir = op.join(output_dir, 'original', 'ale')
-    if op.isdir(og_ale_dir):
-        shutil.rmtree(og_ale_dir)
     os.makedirs(og_ale_dir)
 
     if file_ext in sheet_ext:
@@ -80,27 +82,49 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
 
     """
     Identify cluster peaks.
-    Generate spherical ROIs around cluster peaks.
     """
     peaks_df = get_peaks(img_file, og_ale_dir)
 
     og_roi_dir = op.join(output_dir, 'original', 'rois')
-    if op.isdir(og_roi_dir):
-        shutil.rmtree(og_roi_dir)
     os.makedirs(og_roi_dir)
 
     #run connectivity workflow for each set of coordinates in the dataframe
     for i, row in peaks_df.iterrows():
-        connectivity_workflow(row, output_dir, roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir)
+
+      roi_prefix = '{x}_{y}_{z}'.format(x=row['x'], y=row['y'], z=row['z'])
+
+      # See if file already exists in ROI directory
+      roi_fn = op.join(roi_data_dir, roi_prefix + '.nii.gz')
+      if not op.isfile(roi_fn):
+          make_sphere(row['x'], row['y'], row['z'], roi_data_dir)
+
+      shutil.copy(roi_fn, og_roi_dir)
+
+      connectivity_workflow(roi_fn, op.join(output_dir, 'original'), roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir)
 
     com_ale_dir = op.join(output_dir, 'complementary', 'ale')
-    if op.isdir(com_ale_dir):
-        shutil.rmtree(com_ale_dir)
     os.makedirs(com_ale_dir)
 
     #sum consensus connectivity maps
-    image_sum(og_con_dir com_ale_dir)
+    cale(og_con_dir, com_ale_dir)
 
     cale_fn = glob(op.join(com_ale_dir, 'cALE_thresh-*.nii.gz'))
     #identify cluster peaks in cALE image
     com_peaks_df = get_peaks(cale_fn, work_dir)
+
+    com_roi_dir = op.join(output_dir, 'complementary', 'rois')
+    os.makedirs(com_roi_dir)
+
+    #run connectivity workflow for each set of coordinates in the dataframe
+    for i, row in com_peaks_df.iterrows():
+
+        roi_prefix = '{x}_{y}_{z}'.format(x=row['x'], y=row['y'], z=row['z'])
+
+        # See if file already exists in ROI directory
+        roi_fn = op.join(roi_data_dir, roi_prefix + '.nii.gz')
+        if not op.isfile(roi_fn):
+            make_sphere(row['x'], row['y'], row['z'], roi_data_dir)
+
+        shutil.copy(roi_fn, com_roi_dir)
+
+        connectivity_workflow(roi_fn, op.join(output_dir, 'complementary'), roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir)
