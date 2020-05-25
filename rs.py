@@ -1,6 +1,6 @@
 from __future__ import division
 
-from nipype.interfaces import fsl as fsl          # fsl
+         # fsl
 from nipype.interfaces import utility as util     # utility
 from nipype.pipeline import engine as pe          # pypeline engine
 import nipype.interfaces.io as nio
@@ -18,7 +18,7 @@ def pickfirst(files):
         return files
 
 
-def rs_preprocess(in_file, fwhm, work_dir):
+def rs_preprocess(in_file, fwhm, work_dir, output_dir):
 
     from nipype.workflows.fmri.fsl.preprocess import create_featreg_preproc
 
@@ -61,59 +61,90 @@ def rs_preprocess(in_file, fwhm, work_dir):
 
     rs_preproc_workflow.run()
 
+    #copy data to directory
+    gms_fn = glob(op.join(work_dir, 'gms', '_meanscale0', '*_gms.nii.gz'))
+    mask_fn = glob(op.join(work_dir, 'mask', '_dilatemask0', '*_dil.nii.gz'))
+    gms_fn2 = op.join(output_dir, '{0}_smooth.nii.gz'.format(op.basename(in_file).split('.')[0]))
+    mask_fn2 = op.join(output_dir, '{0}_mask.nii.gz'.format(op.basename(in_file).split('.')[0]))
 
-def rs_firstlevel(name="rsworkflow", outputdir=None):
+    shutil.copyfile(gms_fn, gms_fn2)
+    shutil.copyfile(mask_fn, mask_fn2)
+
+    shutil.rmtree(work_dir)
+
+
+def rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, work_dir):
 
     import nipype.algorithms.modelgen as model  # model generation
     from niflow.nipype1.workflows.fmri.fsl import create_modelfit_workflow
+    from nipype.interfaces import fsl as fsl
+    from nipype.interfaces.base import Bunch
 
+    meants = fsl.utils.ImageMeants()
+    meants.inputs.in_file = unsmooth_fn
+    meants.inputs.mask = roi_mask
+    meants.inputs.out_file = op.join(work_dir, '{0}_{1}.txt'.format(unsmooth_fn.split('.')[0], op.basename(roi_mask).split('.')[0]))
+    meants.cmdline
+    meants.run()
+
+    roi_ts = np.atleast_2d(np.loadtxt(op.join(work_dir, '{0}_{1}.txt'.format(unsmooth_fn.split('.')[0], op.basename(roi_mask).split('.')[0]))))
+    subject_info = Bunch(conditions=['mean'], onsets=[list(np.arange(0,0.72*len(roi_ts[0]),0.72))], durations=[[0.72]], amplitudes=[np.ones(len(roi_ts[0]))], regressor_names=['roi'], regressors=[roi_ts[0]])
 
     level1_workflow = pe.Workflow(name='level1flow')
-
-    modelfit = create_modelfit_workflow()
-    modelfit.get_node('modelestimate').inputs.smooth_autocorr = False
-    modelfit.get_node('modelestimate').inputs.autocorr_noestimate = True
-    modelfit.get_node('modelestimate').inputs.mask_size = 0
-    modelspec = pe.Node(model.SpecifyModel(), name="modelspec")
 
     inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
                                                                  'subjectinfo']),
                         name='inputspec')
 
+    modelspec = pe.Node(model.SpecifyModel(), name="modelspec")
+    modelspec.inputs.input_units = 'secs'
+    modelspec.inputs.time_repetition = 0.72
+    modelspec.inputs.high_pass_filter_cutoff = 0
+
+    modelfit = create_modelfit_workflow()
+    modelfit.get_node('modelestimate').inputs.smooth_autocorr = False
+    modelfit.get_node('modelestimate').inputs.autocorr_noestimate = True
+    modelfit.get_node('modelestimate').inputs.mask_size = 0
+    modelfit.inputs.inputspec.interscan_interval = 0.72
+    modelfit.inputs.inputspec.bases = {'none': {'none': None}}
+    modelfit.inputs.inputspec.model_serial_correlations = False
+    modelfit.inputs.inputspec.film_threshold = 1000
+    contrasts = [['corr', 'T', ['mean', 'roi'], [0,1]]]
+    modelfit.inputs.inputspec.contrasts = contrasts
+
     """
     This node will write out image files in output directory
     """
     datasink = pe.Node(nio.DataSink(), name='sinker')
-    datasink.inputs.base_directory = outputdir
+    datasink.inputs.base_directory = work_dir
 
     level1_workflow.connect(
         [(inputnode, modelspec, [('func', 'functional_runs')]),
          (inputnode, modelspec, [('subjectinfo', 'subject_info')]),
          (modelspec, modelfit, [('session_info', 'inputspec.session_info')]),
-         (inputnode, modelfit, [('func', 'inputspec.functional_data')])])
+         (inputnode, modelfit, [('func', 'inputspec.functional_data')]),
+         (modelfit, datasink, [('outputspec.copes','copes'), ('outputspec.varcopes','varcopes'), ('outputspec.dof_file','dof_file'), ('outputspec.zfiles','zfiles')])])
 
+    level1_workflow.inputs.inputspec.func = smooth_fn
+    level1_workflow.inputs.inputspec.subjectinfo = subject_info
+    level1_workflow.base_dir = work_dir
 
-    cont1 = ['corr', 'T', ['mean', 'roi'], [0,1]]
-    contrasts = [cont1]
+    level1_workflow.run()
 
-    modelspec.inputs.input_units = 'secs'
-    modelspec.inputs.time_repetition = 0.72
-    modelspec.inputs.high_pass_filter_cutoff = 0
+    #copy data to directory
+    shutil.rmtree(op.join(work_dir, 'level1flow'))
+    files_to_copy = glob(op.join(work_dir, '*', '_modelestimate0', '*'))
+    for tmp_fn in files_to_copy:
+        shutil.copy(tmp_fn, output_dir)
 
-    modelfit.inputs.inputspec.interscan_interval = 0.72
-    modelfit.inputs.inputspec.bases = {'none': {'none': None}}
-    modelfit.inputs.inputspec.contrasts = contrasts
-    modelfit.inputs.inputspec.model_serial_correlations = False
-    modelfit.inputs.inputspec.film_threshold = 1000
-
-    return level1_workflow
+    shutil.rmtree(work_dir)
 
 #def rs_secondlevel():
 
 #def rs_grouplevel():
 
 
-def rs_workflow(rs_data_dir, roi_prefix, tmp_roi_fn, work_dir):
+def rs_workflow(rs_data_dir, roi_prefix, roi_mask, work_dir):
 
     from nipype.interfaces.base import Bunch
 
@@ -126,38 +157,22 @@ def rs_workflow(rs_data_dir, roi_prefix, tmp_roi_fn, work_dir):
         for nii_fn in nii_files:
 
             #check to see if smoothed data exists
-            smooth_fn = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt, nii_fn.split('.')[0], '{0}_smooth.nii.gz'.format(nii_fn.split('.')[0]))
+            unsmooth_fn = op.join(rs_data_dir, ppt, 'func', nii_fn)
+            smooth_fn = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt, '{0}_smooth.nii.gz'.format(nii_fn.split('.')[0]))
+
             if not op.isfile(smooth_fn):
+
+                output_dir = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt)
+                if not op.isdir(output_dir):
+                    os.makedirs(output_dir)
                 nii_work_dir = op.join(work_dir, 'rsfc', nii_fn.split('.')[0])
-
-                smooth_flow = rs_preprocess(op.join(rs_data_dir, ppt, 'func', nii_fn), 4, nii_work_dir)
-
-                gms_fn = glob(op.join(nii_work_dir, 'gms', '_meanscale0', '*_gms.nii.gz'))
-                shutil.copyfile(gms_fn, smooth_fn)
-                mask = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt, nii_fn.split('.')[0], '{0}_mask.nii.gz'.format(nii_fn.split('.')[0]))
-                mask_fn = glob(op.join(nii_work_dir, 'mask', '_dilatemask0', '*_dil.nii.gz'))
-                shutil.copyfile(mask_fn, smooth_fn)
+                rs_preprocess(unsmooth_fn, 4, nii_work_dir, output_dir)
 
             else:
                 #run analysis
-                roi_out_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, nii_fn.split('.')[0])
-
-                mask = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt, nii_fn.split('.')[0], '{0}_mask.nii.gz'.format(nii_fn.split('.')[0]))
-                meants = fsl.utils.ImageMeants()
-                meants.in_file = smooth_fn
-                meants.mask = tmp_roi_fn
-                meants.out_file = op.join(roi_out_dir, '{0}_{1}.txt'.format(nii_fn.split('.')[0], op.basename(tmp_roi_fn).split('.')[0]))
-                meants.run()
-
-                roi_ts = np.atleast_2d(np.loadtxt(op.join(roi_out_dir, '{0}.{1}.txt'.format(op.basename(tmp_roi_fn).split('.')[0], nii_fn.split('.')[0]))))
-                subject_info = Bunch(conditions=['mean'], onsets=[list(np.arange(0,0.72*len(roi_ts[0]),0.72))], durations=[[0.72]], amplitudes=[np.ones(len(roi_ts[0]))], regressor_names=['roi'], regressors=[roi_ts[0]])
-
-                firstlevel = rs_firstlevel(name="firstlevel", outputdir=roi_out_dir)
-                firstlevel.inputs.inputspec.func = smooth_fn
-                firstlevel.inputs.inputspec.subjectinfo = subject_info
-
-                firstlevel.run()
-
+                output_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, nii_fn.split('.')[0])
+                nii_work_dir = op.join(work_dir, 'rsfc', nii_fn.split('.')[0])
+                rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, nii_work_dir)
 
         if len(nii_files)>1:
             rs_secondlevel()
