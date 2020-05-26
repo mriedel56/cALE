@@ -123,7 +123,10 @@ def rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, work_dir):
          (inputnode, modelspec, [('subjectinfo', 'subject_info')]),
          (modelspec, modelfit, [('session_info', 'inputspec.session_info')]),
          (inputnode, modelfit, [('func', 'inputspec.functional_data')]),
-         (modelfit, datasink, [('outputspec.copes','copes'), ('outputspec.varcopes','varcopes'), ('outputspec.dof_file','dof_file'), ('outputspec.zfiles','zfiles')])])
+         (modelfit, datasink, [('outputspec.copes','copes'),
+                               ('outputspec.varcopes','varcopes'),
+                               ('outputspec.dof_file','dof_file'),
+                               ('outputspec.zfiles','zfiles')])])
 
     level1_workflow.inputs.inputspec.func = smooth_fn
     level1_workflow.inputs.inputspec.subjectinfo = subject_info
@@ -139,7 +142,42 @@ def rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, work_dir):
 
     shutil.rmtree(work_dir)
 
-#def rs_secondlevel():
+def rs_secondlevel(copes, varcopes, dofs, output_dir, work_dir):
+
+    from nipype.workflows.fmri.fsl.estimate import create_fixed_effects_workflow
+
+    level2workflow = pe.Workflow(name="level2workflow")
+    inputnode = pe.Node(interface=util.IdentityInterface(fields=['copes',
+                                                                 'varcopes',
+                                                                 'dofs']),
+                        name='inputspec')
+
+    fixedfx = create_fixed_effects_workflow()
+
+    datasink = pe.Node(nio.DataSink(), name='sinker')
+    datasink.inputs.base_directory = work_dir
+
+    level2workflow.connect([(inputnode, fixedfx, [('copes', 'inputs.inputspec.copes')]),
+                            (inputnode, fixedfx, [('varcopes', 'inputs.inputspec.varcopes')]),
+                            (inputnode, fixedfx, [('dofs', 'inputs.inputspec.dof_files')]),
+                            (fixedfx, datasink, [('outputspec.copes','copes'),
+                                                 ('outputspec.varcopes','varcopes'),
+                                                 ('outputspec.zfiles','zfiles')])])
+
+    level2workflow.inputs.inputspec.copes = [copes]
+    level2workflow.inputs.inputspec.varcopes = [varcopes]
+    level2workflow.inputs.inputspec.dofs = [dofs]
+    level2workflow.base_dir = work_dir
+
+    level2_workflow.run()
+
+    #copy data to directory
+    shutil.rmtree(op.join(work_dir, 'level2flow'))
+    files_to_copy = glob(op.join(work_dir, '*', '_flameo0', '*'))
+    for tmp_fn in files_to_copy:
+        shutil.copy(tmp_fn, output_dir)
+
+    shutil.rmtree(work_dir)
 
 #def rs_grouplevel():
 
@@ -165,16 +203,21 @@ def rs_workflow(rs_data_dir, roi_prefix, roi_mask, work_dir):
                 output_dir = op.join(rs_data_dir, 'derivatives', 'smoothed', ppt)
                 if not op.isdir(output_dir):
                     os.makedirs(output_dir)
-                nii_work_dir = op.join(work_dir, 'rsfc', nii_fn.split('.')[0])
+                nii_work_dir = op.join(work_dir, 'rsfc', ppt, nii_fn.split('.')[0])
                 rs_preprocess(unsmooth_fn, 4, nii_work_dir, output_dir)
 
-            else:
-                #run analysis
-                output_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, nii_fn.split('.')[0])
-                nii_work_dir = op.join(work_dir, 'rsfc', nii_fn.split('.')[0])
-                rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, nii_work_dir)
+            #run analysis
+            output_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, nii_fn.split('.')[0])
+            nii_work_dir = op.join(work_dir, 'rsfc', ppt, roi_prefix, nii_fn.split('.')[0])
+            rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, nii_work_dir)
 
         if len(nii_files)>1:
-            rs_secondlevel()
+
+            copes = sorted(glob(op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, '*', 'cope*.nii.gz')))
+            varcopes = sorted(glob(op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, '*', 'varcope*.nii.gz')))
+            dofs = sorted(glob(op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, '*', 'dof')))
+            output_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt)
+            nii_work_dir = op.join(work_dir, 'rsfc', ppt)
+            rs_secondlevel(copes, varcopes, dofs, output_dir, nii_work_dir)
 
     rs_grouplevel()
