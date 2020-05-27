@@ -142,6 +142,7 @@ def rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, work_dir):
 
     shutil.rmtree(work_dir)
 
+
 def rs_secondlevel(copes, varcopes, dofs, output_dir, work_dir):
 
     from nipype.workflows.fmri.fsl.estimate import create_fixed_effects_workflow
@@ -179,8 +180,66 @@ def rs_secondlevel(copes, varcopes, dofs, output_dir, work_dir):
 
     shutil.rmtree(work_dir)
 
-#def rs_grouplevel():
 
+def rs_grouplevel(copes, varcopes, output_dir, work_dir):
+
+    from nipype.interfaces.fsl.model import MultipleRegressDesign
+    from nipype.interfaces.fsl.model import FLAMEO
+    from nipype.interfaces.fsl.model import SmoothEstimate
+    from interfaces import Cluster
+    from nipype.interfaces.fsl.utils import Merge
+    from nipype.interfaces.fsl.Info import standard_image
+    from interfaces import PtoZ
+
+    def calcres(smoothest_input)
+        resels = int(smoothest_input[0]/smoothest_input[1])
+
+    grplevelworkflow = pe.Workflow(name="grplevelworkflow")
+
+    merger = Merge()
+    merger.inputs.dimensions = 't'
+    merger.inputs.in_files = copes
+    merger.inputs.merged_file = op.join(work_dir, 'cope.nii.gz')
+    merger.run()
+
+    merger.inputs.in_files = varcopes
+    merger.inputs.merged_file = op.join(work_dir, 'varcope.nii.gz')
+    merger.run()
+
+    model = MultipleRegressDesign()
+    model.inputs.contrasts = [['mean', 'T', ['roi'], [1]]]
+    model.intputs.regressors = dict(roi=np.ones(len(copes)))
+
+    flameo = pe.Node(interface=FLAMEO(), name='flameo')
+    flameo.inputs.cope_file = op.join(work_dir, 'cope.nii.gz')
+    flameo.inputs.var_cope_file = op.join(work_dir, 'varcope.nii.gz')
+    flameo.inputs.run_mode = 'flame1'
+    flameo.inputs.mask = standard_image('MNI152_T1_2mm_brain_mask.nii.gz')
+
+    grplevelworkflow.connect(model, 'design_con', flameo, 'inputs.t_con_file')
+    grplevelworkflow.connect(model, 'design_grp', flameo, 'inputs.cov_split_file')
+    grplevelworkflow.connect(model, 'design_mat', flameo, 'inputs.design_file')
+
+    smoothest = Node(SmoothEstimate(), name='smooth_estimate')
+    grplevelworkflow.connect(flameo, 'zstats', smoothest, 'zstat_file')
+    smoothest.inputs.mask_file = mask_file
+
+    cluster = Node(Cluster(), name='cluster')
+    grplevelworkflow.connect(smoothest, 'resels', cluster, 'resels')
+    grplevelworkflow.connect(smoothest, (['volume', 'resels'], calcres), ptoz, 'resels')
+    grplevelworkflow.connect(ptoz, 'zstat', cluster, 'threshold')
+    cluster.inputs.connectivity = 26
+    cluster.inputs.out_threshold_file = True
+    cluster.inputs.out_index_file = True
+    cluster.inputs.out_localmax_txt_file = True
+    cluster.inputs.voxthresh = True
+
+    grplevelworkflow.connect(flame, 'zstats', cluster, 'in_file')
+
+    datasink = pe.Node(nio.DataSink(), name='sinker')
+    datasink.inputs.base_directory = work_dir
+
+    grplevelworkflow.connect(flameo, 'outputs')
 
 def rs_workflow(rs_data_dir, roi_prefix, roi_mask, work_dir):
 
@@ -208,7 +267,7 @@ def rs_workflow(rs_data_dir, roi_prefix, roi_mask, work_dir):
 
             #run analysis
             output_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, nii_fn.split('.')[0])
-            nii_work_dir = op.join(work_dir, 'rsfc', ppt, roi_prefix, nii_fn.split('.')[0])
+            nii_work_dir = op.join(work_dir, 'rsfc', roi_prefix, ppt, nii_fn.split('.')[0])
             rs_firstlevel(unsmooth_fn, smooth_fn, roi_mask, output_dir, nii_work_dir)
 
         if len(nii_files)>1:
@@ -217,7 +276,12 @@ def rs_workflow(rs_data_dir, roi_prefix, roi_mask, work_dir):
             varcopes = sorted(glob(op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, '*', 'varcope*.nii.gz')))
             dofs = sorted(glob(op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, '*', 'dof')))
             output_dir = op.join(rs_data_dir, 'derivatives', roi_prefix, ppt)
-            nii_work_dir = op.join(work_dir, 'rsfc', ppt)
+            nii_work_dir = op.join(work_dir, 'rsfc', roi_prefix, ppt)
             rs_secondlevel(copes, varcopes, dofs, output_dir, nii_work_dir)
 
-    rs_grouplevel()
+    copes = sorted(glob(op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, 'cope*.nii.gz')))
+    varcopes = sorted(glob(op.join(rs_data_dir, 'derivatives', roi_prefix, ppt, 'varcope*.nii.gz')))
+
+    output_dir = op.join(rs_data_dir, 'derivatives', roi_prefix)
+    nii_work_dir = op.join(work_dir, 'rsfc', roi_prefix)
+    rs_grouplevel(copes, varcopes, output_dir, nii_work_dir)
