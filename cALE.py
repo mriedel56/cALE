@@ -6,10 +6,12 @@ import os
 import numpy as np
 import os.path as op
 import shutil
+import numpy as np
 from peaks import get_peaks
 from nimare.workflows.ale import ale_sleuth_workflow
 from connectivity import connectivity_workflow
 from complementary import cale
+from clustering import clustering_workflow
 
 
 def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_dir=None, ns_data_dir=None, macm_data_dir=None, rsfc_data_dir=None, con_data_dir=None, work_dir=None):
@@ -128,3 +130,13 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
         shutil.copy(roi_fn, com_roi_dir)
 
         connectivity_workflow(roi_fn, op.join(output_dir, 'complementary'), roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir)
+
+    #do clustering of complementary macms and rsfcs
+    com_macm_dir = op.join(output_dir, 'complementary', 'macm')
+    com_rsfc_dir = op.join(output_dir, 'complementary', 'rsfc')
+
+    for nclust in range(2,9,1):
+
+        for tmp_conn in ['macm', 'rsfc'']:
+            tmp_dir = op.join(output_dir, 'complementary', tmp_conn)
+            clustering_workflow(tmp_dir, nclust, 'hierarchical')
