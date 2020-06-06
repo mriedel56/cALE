@@ -7,7 +7,10 @@ import numpy as np
 import os.path as op
 import shutil
 import numpy as np
+from glob import glob
 from peaks import get_peaks
+from nipype.interfaces.fsl.utils import ImageMaths
+from nipype.interfaces.fsl.utils import Merge
 from nimare.workflows.ale import ale_sleuth_workflow
 from connectivity import connectivity_workflow
 from complementary import cale
@@ -139,4 +142,39 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
 
         for tmp_conn in ['macm', 'rsfc'']:
             tmp_dir = op.join(output_dir, 'complementary', tmp_conn)
-            clustering_workflow(tmp_dir, nclust, 'hierarchical')
+            fnames_unthresh = sorted(glob(op.join(tmp_dir, '*thresh-none.nii.gz'))
+            fnames_thresh = sorted(glob(op.join(tmp_dir, '*thresh-*.nii.gz'))
+
+            model = clustering_workflow(fnames_unthresh, nclust, 'hierarchical')
+
+            for tmp_n in range(0,nclust,1):
+
+                os.makedirs(op.join(tmp_dir, 'clustering', str(nclust)))
+
+                #calculate mean of unthresholded images for each cluster
+                tmp_fnames_unthresh = fnames_unthresh[model.labels_ == tmp_n]
+
+                merger = Merge()
+                merger.inputs.in_files = tmp_fnames_unthresh
+                merger.inputs.dimension = 't'
+                merger.inputs.merged_file = op.join(in_dir, 'clustering', str(nclust), '{0}-avg.nii.gz'.format(tmp_n))
+                merger.run()
+
+                meanimg = ImageMaths()
+                meanimg.inputs.in_file = op.join(in_dir, 'clustering', str(nclust), '{0}-avg.nii.gz'.format(tmp_n))
+                meanimg.inputs.op_string = '-Tmean'
+                meanimg.inputs.out_file = op.join(in_dir, 'clustering', str(nclust), '{0}-avg.nii.gz'.format(tmp_n))
+
+                #calculate minimum of thresholded images for each cluster
+                tmp_fnames_thresh = fnames_thresh[model.labels_ == tmp_n]
+
+                merger = Merge()
+                merger.inputs.in_files = tmp_fnames_thresh
+                merger.inputs.dimension = 't'
+                merger.inputs.merged_file = op.join(in_dir, 'clustering', str(nclust), '{0}-min.nii.gz'.format(tmp_n))
+                merger.run()
+
+                meanimg = ImageMaths()
+                meanimg.inputs.in_file = op.join(in_dir, 'clustering', str(nclust), '{0}-min.nii.gz'.format(tmp_n))
+                meanimg.inputs.op_string = '-Tmean'
+                meanimg.inputs.out_file = op.join(in_dir, 'clustering', str(nclust), '{0}-min.nii.gz'.format(tmp_n))
