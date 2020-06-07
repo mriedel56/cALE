@@ -7,8 +7,9 @@ from neurosynth.base.dataset import download
 from nimare.io import convert_neurosynth_to_dataset
 
 
-def macm_workflow(ns_data_dir, output_dir, prefix, mask_fn):
+def macm_workflow(ns_data_dir, output_dir, mask_fn):
 
+    prefix = op.basename(mask_fn).split('.')[0]
     # download neurosynth dataset if necessary
     dataset_file = op.join(ns_data_dir, 'neurosynth_dataset.pkl.gz')
 

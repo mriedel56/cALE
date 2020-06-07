@@ -17,43 +17,47 @@ from complementary import cale
 from clustering import clustering_workflow
 
 
-def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_dir=None, ns_data_dir=None, macm_data_dir=None, rsfc_data_dir=None, con_data_dir=None, work_dir=None):
+def cale_workflow(input_file, output_dir=None, prefix=None, data_dir=None, work_dir=None):
 
     if prefix == None:
-        prefix = op.basename(input_file).split('.')[0] + "_"
+        prefix = op.basename(input_file).split('.')[0]
 
     if output_dir == None:
-        output_dir = op.join(op.abspath(input_file), 'prefix')
+        output_dir = op.join(op.abspath(input_file), prefix)
     if op.isdir(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    if ns_data_dir == None:
-        ns_data_dir = '.'
-
-    if con_data_dir == None:
-        con_data_dir = '.'
-
-    if roi_data_dir == None:
-        roi_data_dir = '.'
-    if not op.isdir(roi_data_dir):
-        os.makedirs(roi_data_dir)
-
-    if macm_data_dir == None:
-        macm_data_dir = '.'
-    if not op.isdir(macm_data_dir):
-        os.makedirs(macm_data_dir)
-
-    if rsfc_data_dir == None:
-        rsfc_data_dir = '.'
-    if not op.isdir(rsfc_data_dir):
-        os.makedirs(rsfc_data_dir)
-
     if work_dir == None:
-        work_dir = op.join('/scratch', prefix)
+        work_dir = op.join(output_dir, 'workdir')
     if op.isdir(work_dir):
         shutil.rmtree(work_dir)
     os.makedirs(work_dir)
+
+    if data_dir == None:
+        data_dir = work_dir = op.join(output_dir, 'data')
+    if not op.isdir(data_dir):
+        os.makedirs(data_dir)
+
+    roi_data_dir = op.join(data_dir, 'roi')
+    if not op.isdir(roi_data_dir):
+        os.makedirs(roi_data_dir)
+
+    macm_data_dir = op.join(data_dir, 'macm')
+    if not op.isdir(macm_data_dir):
+        os.makedirs(macm_data_dir)
+
+    rsfc_data_dir = op.join(data_dir, 'rsfc')
+    if not op.isdir(rsfc_data_dir):
+        os.makedirs(rsfc_data_dir)
+
+    con_data_dir = op.join(data_dir, 'consensus')
+    if not op.isdir(con_data_dir):
+        os.makedirs(con_data_dir)
+
+    ns_data_dir = op.join(data_dir, 'neurosynth_data')
+    if not op.isdir(ns_data_dir):
+        os.makedirs(ns_data_dir)
 
 
     """
@@ -105,7 +109,7 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
 
       shutil.copy(roi_fn, og_roi_dir)
 
-      connectivity_workflow(roi_fn, op.join(output_dir, 'original'), roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir)
+      connectivity_workflow(roi_fn, op.join(output_dir, 'original'), data_dir, ['macm', 'rsfc'])
 
     com_ale_dir = op.join(output_dir, 'complementary', 'ale')
     os.makedirs(com_ale_dir)
@@ -132,11 +136,7 @@ def cale_workflow(input_file, mask=None, output_dir=None, prefix=None, roi_data_
 
         shutil.copy(roi_fn, com_roi_dir)
 
-        connectivity_workflow(roi_fn, op.join(output_dir, 'complementary'), roi_data_dir, macm_data_dir, rs_data_dir, con_data_dir)
-
-    #do clustering of complementary macms and rsfcs
-    com_macm_dir = op.join(output_dir, 'complementary', 'macm')
-    com_rsfc_dir = op.join(output_dir, 'complementary', 'rsfc')
+        connectivity_workflow(roi_fn, op.join(output_dir, 'complementary'), data_dir, ['macm', 'rsfc'])
 
     for nclust in range(2,9,1):
 
